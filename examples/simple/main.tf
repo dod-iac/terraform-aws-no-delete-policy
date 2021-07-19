@@ -11,7 +11,6 @@ data "aws_region" "current" {}
 
 module "iam_policy" {
   source = "../../"
-
 }
 
 #

@@ -21,9 +21,10 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/sts"
 )
 
 var (
@@ -34,8 +35,8 @@ func cleanup(s *session.Session, region string, testName string, testBucketName 
 	s3Client := s3.New(s, aws.NewConfig().WithRegion(region))
 	// Delete test object
 	_, _ = s3Client.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(testBucketName),
-		Key: aws.String(testObjectKey),
+		Bucket:    aws.String(testBucketName),
+		Key:       aws.String(testObjectKey),
 		VersionId: aws.String(objectVersionID),
 	})
 }
@@ -67,7 +68,7 @@ func TestTerraformSimpleExample(t *testing.T) {
 		// Set the variables passed to terraform
 		Vars: map[string]interface{}{
 			"test_name": testName,
-			"tags": tags,
+			"tags":      tags,
 		},
 		// Set the environment variables passed to terraform.
 		// AWS_DEFAULT_REGION is the only environment variable strictly required,
@@ -90,24 +91,64 @@ func TestTerraformSimpleExample(t *testing.T) {
 
 	testRoleARN := terraform.Output(t, terraformOptions, "test_role_arn")
 
-  // Assume the test role
+	// Assume the test role
 	s := session.Must(session.NewSession())
 
+	getCallerIdentityOutput, getCallerIdentityError := sts.New(s, aws.NewConfig().WithRegion(region)).GetCallerIdentity(&sts.GetCallerIdentityInput{})
+
+	// Check that test role has S3 permissions
+	require.NoError(t, getCallerIdentityError)
+
+	// Output bucket location
+	t.Logf(
+		"%s:%s",
+		aws.StringValue(getCallerIdentityOutput.Account),
+		aws.StringValue(getCallerIdentityOutput.Arn))
+
+	// S3 client for admin user
 	originalS3Client := s3.New(s, aws.NewConfig().WithRegion(region))
 
 	newCredentials := stscreds.NewCredentials(s, testRoleARN)
 
+	getCallerIdentityOutput, getCallerIdentityError = sts.New(s, &aws.Config{
+		CredentialsChainVerboseErrors: aws.Bool(true),
+		Credentials:                   newCredentials,
+		Region:                        aws.String(region),
+	}).GetCallerIdentity(&sts.GetCallerIdentityInput{})
+
+	// Check that test role has S3 permissions
+	require.NoError(t, getCallerIdentityError)
+
+	// Output bucket location
+	t.Logf(
+		"%s:%s",
+		aws.StringValue(getCallerIdentityOutput.Account),
+		aws.StringValue(getCallerIdentityOutput.Arn))
+
+	// S3 client for test role
 	newS3Client := s3.New(s, &aws.Config{
 		CredentialsChainVerboseErrors: aws.Bool(true),
-		Credentials: newCredentials,
-		Region: aws.String(region),
+		Credentials:                   newCredentials,
+		Endpoint:                      aws.String("s3.us-west-2.amazonaws.com"),
+		Region:                        aws.String(region),
 	})
+
+	getBucketLocationOutput, getBucketLocationError := newS3Client.GetBucketLocation(&s3.GetBucketLocationInput{
+		Bucket: aws.String(testBucketName),
+		ExpectedBucketOwner: getCallerIdentityOutput.Account,
+	})
+
+	// Check that test role has S3 permissions
+	require.NoError(t, getBucketLocationError)
+
+  // Output bucket location
+	t.Log(aws.StringValue(getBucketLocationOutput.LocationConstraint))
 
 	getBucketPolicyOutput, getBucketPolicyError := newS3Client.GetBucketPolicy(&s3.GetBucketPolicyInput{
 		Bucket: aws.String(testBucketName),
 	})
 
-	// Check that role has S3 permissions
+	// Check that test role has S3 permissions
 	require.NoError(t, getBucketPolicyError)
 
 	t.Log(aws.StringValue(getBucketPolicyOutput.Policy))
@@ -125,23 +166,23 @@ func TestTerraformSimpleExample(t *testing.T) {
 
 	// Attempt to put an object into the test bucket
 	putObjectOutput, putObjectError := newS3Client.PutObject(&s3.PutObjectInput{
-		ACL: aws.String("bucket-owner-full-control"),
-		Bucket: aws.String(testBucketName),
-		Body: aws.ReadSeekCloser(bytes.NewReader([]byte("test"))),
-		Key: aws.String(testObjectKey),
+		ACL:                  aws.String("bucket-owner-full-control"),
+		Bucket:               aws.String(testBucketName),
+		Body:                 aws.ReadSeekCloser(bytes.NewReader([]byte("test"))),
+		Key:                  aws.String(testObjectKey),
 		ServerSideEncryption: aws.String("AES256"),
 	})
 
 	// Check that no error occured
 	require.NoError(t, putObjectError)
 
-  // Defer cleanup of resources
+	// Defer cleanup of resources
 	defer cleanup(s, region, testName, testBucketName, aws.StringValue(putObjectOutput.VersionId))
 
 	// Attempt to delete the object using IAM role
 	_, deleteObjectError := newS3Client.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(testBucketName),
-		Key: aws.String(testObjectKey),
+		Bucket:    aws.String(testBucketName),
+		Key:       aws.String(testObjectKey),
 		VersionId: putObjectOutput.VersionId,
 	})
 
@@ -150,21 +191,21 @@ func TestTerraformSimpleExample(t *testing.T) {
 
 	// Check that the expected error occured
 	deleteObjectAWSError, deleteObjectAWSErrorOK := deleteObjectError.(awserr.Error)
-	if ! deleteObjectAWSErrorOK {
+	if !deleteObjectAWSErrorOK {
 		require.FailNow(t, fmt.Sprintf("unexpected error when deleting bucket: %s", deleteObjectError.Error()))
 	}
 
 	// Check why the request to delete the object was denied
 	require.Equal(t, "Access Denied", deleteObjectAWSError.Message())
 
-  // Delete object using original credentials
+	// Delete object using original credentials
 	_, _ = originalS3Client.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(testBucketName),
-		Key: aws.String(testObjectKey),
+		Bucket:    aws.String(testBucketName),
+		Key:       aws.String(testObjectKey),
 		VersionId: putObjectOutput.VersionId,
 	})
 
-  // Attempt to delete the bucket
+	// Attempt to delete the bucket
 	_, deleteBucketError := newS3Client.DeleteBucket(&s3.DeleteBucketInput{
 		Bucket: aws.String(testBucketName),
 	})
@@ -174,7 +215,7 @@ func TestTerraformSimpleExample(t *testing.T) {
 
 	// Check that the expected error occured
 	deleteBucketAWSError, deleteBucketAWSErrorOK := deleteBucketError.(awserr.Error)
-	if ! deleteBucketAWSErrorOK {
+	if !deleteBucketAWSErrorOK {
 		require.FailNow(t, fmt.Sprintf("unexpected error when deleting bucket: %s", deleteBucketError.Error()))
 	}
 

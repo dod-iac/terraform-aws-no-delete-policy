@@ -83,13 +83,22 @@ data "aws_iam_policy_document" "test_role_policy" {
   statement {
     sid = "AllowGetBucketLocation"
     actions = [
+      "s3:GetBucketLocation",
+      "s3:ListAllMyBuckets"
+    ]
+    effect = "Allow"
+    resources = ["*"]
+  }
+  /*statement {
+    sid = "AllowGetBucketLocation"
+    actions = [
       "s3:*",
     ]
     effect    = "Allow"
     resources = ["*"]
-  }
+  }*/
   # AllowS3
-  /*statement {
+  statement {
     sid = "AllowS3"
     actions = [
       "s3:*"
@@ -99,7 +108,7 @@ data "aws_iam_policy_document" "test_role_policy" {
       aws_s3_bucket.test.arn,
       format("%s/*", aws_s3_bucket.test.arn)
     ]
-  }*/
+  }
 }
 
 resource "aws_iam_policy" "test_policy_allow" {

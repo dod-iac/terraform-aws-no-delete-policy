@@ -3,11 +3,11 @@ module github.com/dod-iac/terraform-aws-no-delete-policy
 go 1.16
 
 require (
-	github.com/aws/aws-sdk-go v1.27.1
-	github.com/gordonklaus/ineffassign v0.0.0-20210225214923-2e10b2664254
-	github.com/gruntwork-io/terratest v0.34.7
-	github.com/kisielk/errcheck v1.2.0
+	github.com/aws/aws-sdk-go v1.40.8
+	github.com/gordonklaus/ineffassign v0.0.0-20210522101830-0589229737b2
+	github.com/gruntwork-io/terratest v0.37.0
+	github.com/kisielk/errcheck v1.6.0
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/tools v0.1.0
-	honnef.co/go/tools v0.0.1-2019.2.3
+	golang.org/x/tools v0.1.5
+	honnef.co/go/tools v0.2.0
 )
